@@ -1,0 +1,208 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "C. Giner-Baixauli"
+date: "May 3, 2018"
+output: html_document
+---
+
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+## Data set
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project comes from this original source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+## Libraries and seed setting
+
+Since we will use Machine Learning methods, we must load some libraries:
+
+
+```{r echo=TRUE}
+library(caret)
+library(rpart)
+library(randomForest)
+library(rattle)
+```
+
+In order to make this study reproducible, we set a seed:
+
+```{r echo=TRUE}
+set.seed(25)
+```
+
+
+## Data preprocessing
+
+The training and testing data sets can be found on the following URLs:
+
+```{r echo=TRUE}
+url_train <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url_test <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+Now we are going to read the data and fix some wrong values as NA:
+
+```{r echo=TRUE}
+training <- read.csv(url(url_train), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(url_test), na.strings=c("NA","#DIV/0!",""))
+```
+
+We are going to divide the training data set into two data sets, 60% for training, 40% for testing:
+
+```{r echo=TRUE}
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+part_training <- training[inTrain, ]; part_testing <- training[-inTrain, ]
+dim(part_training); dim(part_testing)
+```
+
+
+## Data cleaning
+
+First we will search the near zero variance variables using the function nearZeroVar from caret library.
+
+```{r echo=TRUE}
+nearzerovar_data <- nearZeroVar(part_training, saveMetrics=TRUE)
+```
+
+And we create a subset without near zero variance variables:
+
+```{r echo=TRUE}
+nearzerovar <- names(part_training) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
+"kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
+"max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
+"var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm", "var_pitch_arm", "avg_yaw_arm",
+"stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm", "kurtosis_picth_arm",
+"kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
+"max_roll_arm", "min_roll_arm", "min_pitch_arm", "amplitude_roll_arm", "amplitude_pitch_arm",
+"kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
+"skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell",
+"amplitude_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm",
+"skewness_roll_forearm", "skewness_pitch_forearm", "skewness_yaw_forearm", "max_roll_forearm",
+"max_yaw_forearm", "min_roll_forearm", "min_yaw_forearm", "amplitude_roll_forearm",
+"amplitude_yaw_forearm", "avg_roll_forearm", "stddev_roll_forearm", "var_roll_forearm",
+"avg_pitch_forearm", "stddev_pitch_forearm", "var_pitch_forearm", "avg_yaw_forearm",
+"stddev_yaw_forearm", "var_yaw_forearm")
+part_training <- part_training[!nearzerovar]
+dim(part_training)
+```
+
+We remove the first ID variable to avoid interferences with the Machine Learning algorithms:
+
+```{r echo=TRUE}
+part_training <- part_training[c(-1)]
+```
+
+Finally, we clean the variables with more than a 60% NA values:
+
+```{r echo=TRUE}
+training2 <- part_training
+for(i in 1:length(part_training)) {
+        if( sum( is.na( part_training[, i] ) ) /nrow(part_training) >= .6 ) {
+        for(j in 1:length(training2)) {
+            if( length( grep(names(part_training[i]), names(training2)[j]) ) ==1)  {
+                training2 <- training2[ , -j]
+            }   
+        } 
+    }
+}
+dim(training2)
+```
+
+```{r echo=TRUE}
+part_training <- training2
+rm(training2)
+```
+
+Now we will do the same three transformations for the part_testing and testing data sets, with "classe" column (58) removed:
+
+```{r echo=TRUE}
+clean1 <- colnames(part_training)
+clean2 <- colnames(part_training[, -58])
+part_testing <- part_testing[clean1]
+testing <- testing[clean2]
+dim(part_testing); dim(testing)
+```
+
+To avoid problems with decision trees and random forest algorithm, we have to coerce all the data into the same type. We will also remove the second row of the training set:
+
+```{r echo=TRUE}
+for (i in 1:length(testing) ) {
+        for(j in 1:length(part_training)) {
+        if( length( grep(names(part_training[i]), names(testing)[j]) ) ==1)  {
+            class(testing[j]) <- class(part_training[i])
+        }      
+    }      
+}
+testing <- rbind(part_training[2, -58] , testing)
+testing <- testing[-1,]
+```
+
+## Decision Tree Algorithm
+
+Now we are going to apply the Decision Tree Algorithm to the training data set.
+
+```{r echo=TRUE}
+fitDT <- rpart(classe ~ ., data = part_training, method = "class")
+```
+
+
+```{r echo=TRUE}
+fancyRpartPlot(fitDT)
+```
+
+Let's predict with the test data set.
+
+```{r echo=TRUE}
+predictDT <- predict(fitDT, part_testing, type = "class")
+```
+
+Let's test the results with confusion matrix:
+
+```{r echo=TRUE}
+confusionMatrix(predictDT, part_testing$classe)
+```
+
+As we can see, the accuracy of this algorithm is 0.8567, so it is a good prediction model, but will try to improve it.
+
+## Random Forest Algorithm
+
+Now we are going to apply the Random Forests Algorithm to the training data set.
+
+```{r echo=TRUE}
+fitRF <- randomForest(classe ~. , data=part_training)
+```
+
+Let's predict with the test data set.
+
+```{r echo=TRUE}
+predictionsRF <- predict(fitRF, part_testing, type = "class")
+```
+
+Let's test the results with confusion matrix:
+
+```{r echo=TRUE}
+confusionMatrix(predictionsRF, part_testing$classe)
+```
+
+The accuracy of the Random Forest Algorithm is 0.9976, so this method performs much better than the Decision Tree Algorithm.
+
+## Prediction
+
+Finally, we will apply the Random Forest Algorithm to the 20 test cases available in the test data:
+
+```{r echo=TRUE}
+predict20 <- predict(fitRF, testing, type = "class")
+predict20
+```
